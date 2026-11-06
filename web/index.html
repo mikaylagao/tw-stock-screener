@@ -324,7 +324,7 @@ const COLDEF = {
 const BASE_COLS = ["name","mkt","c","chg","ma5","ma5p","o","h","hp","vol","volp","vinc"];
 
 // ---------- 狀態 ----------
-let DATA = null, cur = "picks", LIST = [], shown = 0, STATIC = false, deferredPrompt = null;
+let DATA = null, cur = "picks", LIST = [], shown = 0, STATIC = false, deferredPrompt = null, GEN = "";
 const PAGE = 40;
 const mq = window.matchMedia("(max-width:640px)");
 const store = {
@@ -553,6 +553,7 @@ async function loadDates(keep){
     return `<option value="${d.date}">${fmtD(d.date)}${i===0?"（最新）":""}${d.provisional?"（暫行）":part?"（部分）":""}</option>`;
   }).join("");
   if (keep && prev && j.dates.some(d=>d.date===prev)) sel.value = prev;
+  if (STATIC) GEN = j.generatedAt || "";
   if (STATIC){ $("#jobMsg").textContent = j.generatedAt ? `資料更新於 ${j.generatedAt}；交易日 13:35 暫行版、15:30 官方校正，之後自動補齊投信與處置。` : ""; return j.dates.length; }
   $("#btnUpdate").textContent = "更新資料";
   showJob(j.job);
@@ -563,7 +564,7 @@ async function loadScreen(){
   const d = $("#date").value;
   if (!d) { $("#statusPill").textContent = "尚無資料。"; return; }
   $("#summary").innerHTML = `<div class="desc">計算中…</div>`;
-  DATA = await (await fetch(STATIC ? `data/screen/${d}.json` : "api/screen?date="+d)).json();
+  DATA = await (await fetch(STATIC ? `data/screen/${d}.json?v=${encodeURIComponent(GEN)}` : "api/screen?date="+d)).json();
   statusBar(); run();
 }
 function showJob(job){
