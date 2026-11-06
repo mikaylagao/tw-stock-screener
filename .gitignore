@@ -3,3 +3,4 @@ site/
 __pycache__/
 fetch_log.txt
 *.pyc
+每日報告/
