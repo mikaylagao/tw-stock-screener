@@ -1,5 +1,5 @@
 // 只快取介面檔案；資料 API 一律走網路（避免顯示過期名單）
-const CACHE = "tw-screener-v3";
+const CACHE = "tw-screener-v4";
 const SHELL = ["./", "index.html", "manifest.webmanifest", "icon-192.png", "icon-512.png", "apple-touch-icon.png"];
 self.addEventListener("install", e => { e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL))); self.skipWaiting(); });
 self.addEventListener("activate", e => {

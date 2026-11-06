@@ -67,10 +67,12 @@ jobs:
       - name: 產生網站
         env:
           PYTHONIOENCODING: utf-8
-        run: python build.py --days 60
+        run: python build.py --days 40
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
           path: site
       - id: deploy
         uses: actions/deploy-pages@v4
+        with:
+          timeout: 1800000
