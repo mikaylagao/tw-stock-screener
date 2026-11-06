@@ -1,0 +1,563 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>台股每日條件篩選</title>
+<meta name="description" content="台股上市櫃每日條件選股">
+<meta name="theme-color" content="#2f5bd3">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="台股篩選">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon-192.png" type="image/png">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<style>
+:root{
+  --bg:#f4f6f9;--panel:#fff;--ink:#1d2330;--muted:#677085;--line:#e3e6ec;--accent:#2f5bd3;--accent-ink:#fff;
+  --up:#d63a3a;--down:#1f8a4c;--warn:#a86b12;--warn-bg:#fff4df;--chip:#eef1f7;--hl:#f3f6ff;--shadow:0 6px 24px rgba(20,30,60,.12);
+  --sat:env(safe-area-inset-top);--sab:env(safe-area-inset-bottom);
+}
+@media (prefers-color-scheme:dark){:root{
+  --bg:#101318;--panel:#191d25;--ink:#e6e9ef;--muted:#98a0b3;--line:#2b313e;--accent:#6d8ef0;--accent-ink:#0d1220;
+  --up:#ff6b6b;--down:#4cc98a;--warn:#f0b54a;--warn-bg:#2b2416;--chip:#232935;--hl:#1f2533;--shadow:0 6px 24px rgba(0,0,0,.5);
+}}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{background:var(--bg)}
+body{margin:0;color:var(--ink);font:14px/1.5 "Noto Sans TC","PingFang TC","Microsoft JhengHei",system-ui,sans-serif;-webkit-text-size-adjust:100%}
+input,select,button{font:inherit;color:var(--ink);background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:6px 10px;min-height:36px}
+input[type=checkbox]{min-height:0;width:18px;height:18px;padding:0;accent-color:var(--accent);flex:none}
+button{cursor:pointer}
+button.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent);font-weight:600}
+button:disabled{opacity:.55;cursor:default}
+label{color:var(--muted);font-size:13px}
+
+/* ---------- 頂部 ---------- */
+.appbar{position:sticky;top:0;z-index:20;background:var(--panel);border-bottom:1px solid var(--line);padding:calc(var(--sat) + 10px) 20px 0}
+.bar1{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+h1{font-size:18px;margin:0 8px 0 0;font-weight:700;white-space:nowrap}
+.grow{flex:1}
+.iconbtn{display:inline-flex;align-items:center;justify-content:center;gap:4px}
+#jobMsg{font-size:12px;color:var(--muted)}
+.chips{display:flex;gap:6px;padding:10px 0;flex-wrap:wrap}
+.tab{border:1px solid var(--line);background:var(--chip);border-radius:999px;padding:6px 12px;cursor:pointer;font-size:13px;white-space:nowrap;user-select:none}
+.tab.on{background:var(--accent);color:var(--accent-ink);border-color:var(--accent);font-weight:600}
+
+main{padding:14px 20px 30px;max-width:1800px;margin:0 auto}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px 14px;margin-bottom:12px}
+.row{display:flex;flex-wrap:wrap;gap:10px 16px;align-items:center}
+.field{display:flex;align-items:center;gap:6px}
+.chk{display:flex;align-items:center;gap:8px;color:var(--ink);font-size:14px}
+.ok{color:var(--down)} .bad{color:var(--up)} .pend{color:var(--warn)}
+
+details.status{font-size:13px;color:var(--muted)}
+details.status summary{cursor:pointer;list-style:none;display:flex;flex-wrap:wrap;gap:4px 12px;align-items:center}
+details.status summary::-webkit-details-marker{display:none}
+details.status summary::after{content:"詳細 ▾";margin-left:auto;color:var(--accent);font-size:12px}
+details.status[open] summary::after{content:"收合 ▴"}
+.statusDetail{display:flex;flex-wrap:wrap;gap:4px 14px;margin-top:8px;padding-top:8px;border-top:1px dashed var(--line)}
+.statusDetail b,summary b{color:var(--ink);font-weight:600}
+.warnbox{background:var(--warn-bg);color:var(--warn);border-radius:10px;padding:8px 12px;font-size:13px;margin-bottom:12px;display:none}
+
+.desc{font-size:13px;color:var(--muted)}
+.desc code{background:var(--chip);padding:1px 5px;border-radius:4px;color:var(--ink);font-size:12px}
+.custom{display:none;margin-top:10px;border-top:1px dashed var(--line);padding-top:10px}
+.custom.on{display:block}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:4px 14px}
+.grid label{color:var(--ink);font-size:14px;display:flex;gap:8px;align-items:center;padding:5px 0}
+
+.counts{display:flex;flex-wrap:wrap;gap:4px 18px;align-items:baseline}
+.big{font-size:22px;font-weight:700;color:var(--ink)}
+.sub{font-size:12px;color:var(--muted);width:100%}
+
+/* 篩選面板（桌面為一般面板；手機為底部抽屜） */
+.sheetHead{display:none}
+.backdrop{display:none}
+
+/* 表格 */
+.tablewrap{overflow:auto;max-height:calc(100vh - 150px);border:1px solid var(--line);border-radius:12px;background:var(--panel)}
+table{border-collapse:collapse;width:100%;font-size:13px;font-variant-numeric:tabular-nums}
+th,td{padding:6px 9px;border-bottom:1px solid var(--line);white-space:nowrap;text-align:right}
+th{position:sticky;top:0;background:var(--panel);color:var(--muted);font-weight:600;z-index:1}
+td.l,th.l{text-align:left}
+tr:hover td{background:var(--hl)}
+tr.und td{opacity:.7}
+.up{color:var(--up)} .dn{color:var(--down)}
+.badge{display:inline-block;font-size:11px;padding:0 6px;border-radius:999px;background:var(--warn-bg);color:var(--warn);margin-left:4px;vertical-align:middle}
+.empty{padding:30px;text-align:center;color:var(--muted);white-space:normal}
+
+/* 卡片（手機） */
+#cards{display:none}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:12px 14px;margin-bottom:10px}
+.card.und{opacity:.75}
+.ctop{display:flex;align-items:flex-start;gap:10px}
+.cname{font-size:16px;font-weight:700;line-height:1.3}
+.cmeta{font-size:12px;color:var(--muted)}
+.cprice{margin-left:auto;text-align:right;font-variant-numeric:tabular-nums}
+.cprice .px{font-size:19px;font-weight:700;line-height:1.2}
+.cprice .pc{font-size:13px;font-weight:600}
+.kv{display:grid;grid-template-columns:repeat(3,1fr);gap:8px 10px;margin-top:10px;font-variant-numeric:tabular-nums}
+.kv div{min-width:0}
+.kv span{display:block;font-size:11px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.kv b{display:block;font-size:14px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.kv .more{display:none}
+.card.open .kv .more{display:block}
+.toggle{margin-top:8px;font-size:12px;color:var(--accent);text-align:center}
+.moreBtn{width:100%;margin:4px 0 10px}
+
+.bottombar{display:none}
+footer{color:var(--muted);font-size:12px;padding:6px 20px 30px;max-width:1800px;margin:0 auto;line-height:1.7}
+
+/* ---------- 手機 ---------- */
+@media (max-width:760px){
+  body{font-size:15px}
+  input,select,button{font-size:16px;min-height:42px}
+  .appbar{padding:calc(var(--sat) + 8px) 12px 0}
+  h1{font-size:17px}
+  .bar1 .dateField label{display:none}
+  .bar1 select{max-width:58vw}
+  #jobMsg{width:100%;order:9}
+  #jobMsg:empty{display:none}
+  .chips{flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none;margin:0 -12px;padding:10px 12px;scroll-snap-type:x proximity}
+  .chips::-webkit-scrollbar{display:none}
+  .tab{font-size:14px;padding:8px 14px;scroll-snap-align:start}
+  main{padding:10px 12px calc(84px + var(--sab))}
+  .panel{border-radius:14px}
+  .grid{grid-template-columns:1fr 1fr;gap:0 10px}
+  .grid label{font-size:14px;padding:8px 0;align-items:flex-start}
+  .customRow{flex-direction:column;align-items:stretch}
+  .customRow .field{justify-content:space-between}
+  .customRow .field select,.customRow .field input{flex:1}
+  .big{font-size:24px}
+  .tablewrap{display:none}
+  #cards{display:block}
+  #filters{position:fixed;left:0;right:0;bottom:0;z-index:40;margin:0;border-radius:18px 18px 0 0;box-shadow:var(--shadow);
+    padding:6px 16px calc(16px + var(--sab));max-height:82vh;overflow:auto;transform:translateY(105%);transition:transform .25s ease;display:block}
+  #filters.open{transform:none}
+  #filters .row{flex-direction:column;align-items:stretch;gap:12px}
+  #filters .field{justify-content:space-between}
+  #filters .field input,#filters .field select{flex:1;max-width:62%}
+  .sheetHead{display:flex;align-items:center;justify-content:space-between;padding:8px 0 10px;position:sticky;top:-6px;background:var(--panel);z-index:1}
+  .sheetHead::before{content:"";position:absolute;top:0;left:50%;width:40px;height:4px;margin-left:-20px;border-radius:2px;background:var(--line)}
+  .sheetHead b{font-size:16px}
+  .backdrop{display:block;position:fixed;inset:0;background:rgba(0,0,0,.35);z-index:35;opacity:0;pointer-events:none;transition:opacity .2s}
+  .backdrop.open{opacity:1;pointer-events:auto}
+  .bottombar{display:flex;gap:8px;position:fixed;left:0;right:0;bottom:0;z-index:30;background:var(--panel);border-top:1px solid var(--line);
+    padding:8px 12px calc(8px + var(--sab))}
+  .bottombar button{flex:1;min-height:46px;font-size:15px}
+  .desktopOnly{display:none!important}
+  footer{padding:0 14px calc(90px + var(--sab))}
+}
+</style>
+</head>
+<body>
+<header class="appbar">
+  <div class="bar1">
+    <h1>台股篩選</h1>
+    <div class="field dateField"><label for="date">資料日期</label><select id="date" aria-label="資料日期"></select></div>
+    <span class="grow"></span>
+    <button id="btnUpdate" class="iconbtn" title="抓取最新資料">⟳ 更新</button>
+    <span id="jobMsg"></span>
+  </div>
+  <nav class="chips" id="tabs" aria-label="策略"></nav>
+</header>
+
+<main>
+  <details class="panel status" id="statusBar"><summary>載入中…</summary></details>
+  <div class="warnbox" id="warnBox"></div>
+
+  <div class="panel">
+    <div class="desc" id="desc"></div>
+    <div class="custom" id="customPanel">
+      <div class="grid" id="condGrid"></div>
+      <div class="row customRow" style="margin-top:10px">
+        <div class="field"><label for="macdSel">MACD</label>
+          <select id="macdSel"><option value="">不限</option><option value="mS">綠柱縮短</option><option value="mG">紅柱增長</option><option value="mT">由綠翻紅</option></select></div>
+        <div class="field"><label for="comboSel">已存組合</label><select id="comboSel"><option value="">—</option></select><button id="btnDel">刪除</button></div>
+        <div class="field"><label for="comboName">組合名稱</label><input id="comboName" placeholder="例如：突破＋投信"><button id="btnSave">儲存</button></div>
+      </div>
+      <div class="desc" style="margin-top:6px">已勾選條件全部 AND（同時成立）；組合儲存在這台裝置的瀏覽器。</div>
+    </div>
+  </div>
+
+  <div class="backdrop" id="backdrop"></div>
+  <section class="panel" id="filters" aria-label="篩選與排序">
+    <div class="sheetHead"><b>篩選與排序</b><button class="primary" id="btnDone">完成</button></div>
+    <div class="row">
+      <div class="field"><label for="q">搜尋</label><input id="q" placeholder="代號或名稱" size="12" inputmode="search"></div>
+      <div class="field"><label for="mkt">市場</label><select id="mkt"><option value="">全部市場</option><option>上市</option><option>上櫃</option></select></div>
+      <div class="field"><label for="minClose">最低收盤價</label><input id="minClose" type="number" value="200" min="0" step="1" inputmode="decimal" style="width:90px"></div>
+      <div class="field"><label for="minVinc">最低量增幅 %</label><input id="minVinc" type="number" placeholder="不限" inputmode="decimal" style="width:80px"></div>
+      <label class="chk"><input type="checkbox" id="addTrust">另加投信連兩日買超</label>
+      <div class="field"><label for="sort">排序</label>
+        <select id="sort">
+          <option value="cDesc">收盤價 高→低</option><option value="cAsc">收盤價 低→高</option>
+          <option value="chg">今日漲跌幅 高→低</option><option value="vinc">量增幅 高→低</option>
+          <option value="vol">成交量 高→低</option><option value="trust">投信兩日買超 高→低</option>
+          <option value="code">股票代號</option>
+        </select></div>
+      <label class="chk"><input type="checkbox" id="showUnd">列出未判定</label>
+      <button id="btnReset">重設篩選</button>
+      <button id="btnExport" class="primary desktopOnly">匯出目前名單</button>
+    </div>
+  </section>
+
+  <div class="panel counts" id="counts"></div>
+  <div class="tablewrap"><table id="tbl"><thead></thead><tbody></tbody></table></div>
+  <div id="cards"></div>
+</main>
+<footer id="foot"></footer>
+
+<nav class="bottombar">
+  <button id="btnFilter">篩選・排序</button>
+  <button id="btnTop">回到頂端</button>
+  <button id="btnExport2" class="primary">匯出</button>
+</nav>
+
+<script>
+"use strict";
+const $ = s => document.querySelector(s);
+const STRATS = [
+  {k:"s1", n:"突破增量", d:"<code>H[t] &gt; H[p]</code> 且 <code>V[t] &gt; V[p]</code>", cols:[]},
+  {k:"s2", n:"20日漲停破五日", d:"最近 20 個交易日至少一天收盤漲停，且 <code>C[t] &lt; MA5[t]</code>（低於五日線即可，不要求今天才跌破）", cols:["lu20d","limit"]},
+  {k:"s3", n:"漲停收十字", d:"前一交易日收盤漲停，且 <code>O[t] == C[t]</code>（嚴格相等）", cols:["luPrev"]},
+  {k:"s4", n:"五日線上揚・量縮一半", d:"<code>MA5[t] &gt; MA5[p]</code> 且 <code>V[t] ≤ V[p] × 0.5</code>", cols:[]},
+  {k:"s5", n:"低點墊高・量縮", d:"<code>L[t] &gt; L[p]</code> 且 <code>V[t] &lt; V[p]</code>（相等不列入）", cols:["l","lp"]},
+  {k:"s6", n:"投信連兩日買超", d:"<code>F[t] &gt; 0</code> 且 <code>F[p] &gt; 0</code>（各自買超，非兩日合計）", cols:["F","Fp","F2"]},
+  {k:"s7", n:"下一交易日出關", d:"官方處置公告最後適用日 = t，預計下一交易日解除；已排除截至 t 已公告的再次處置與延長；當日無成交（可能停牌順延）標示待核對", cols:["dispP","dispK"]},
+  {k:"s8", n:"月K由綠轉紅", d:"上月收盤 &lt; 上月開盤，且 <code>C[t]</code> &gt; 當月開盤（該股當月首次成交日開盤價）", cols:["pmO","pmC","cmO"]},
+  {k:"s9", n:"日MACD綠柱縮短", d:"昨日、今日柱體皆為負，且今日柱體 &gt; 昨日柱體", cols:["dif","dea","histp","hist","mn"]},
+  {k:"s10", n:"日MACD紅柱增長", d:"昨日、今日柱體皆為正，且今日柱體 &gt; 昨日柱體", cols:["dif","dea","histp","hist","mn"]},
+  {k:"s11", n:"日MACD由綠翻紅", d:"昨日柱體 ≤ 0 且今日柱體 &gt; 0（零軸容差 1e-8）", cols:["dif","dea","histp","hist","mn"]},
+  {k:"custom", n:"自訂條件", d:"勾選的條件全部同時成立（AND）。全部未勾選且 MACD 不限時，只套用共同篩選條件。", cols:[]},
+];
+const CONDS = [
+  {k:"c1", n:"今日最高突破前日最高", cols:[]},
+  {k:"c2", n:"今日成交量大於前日", cols:[]},
+  {k:"c3", n:"近 20 個交易日曾收盤漲停", cols:["lu20d"]},
+  {k:"c4", n:"今日開盤價＝收盤價", cols:[]},
+  {k:"c5", n:"今日五日線高於昨日五日線", cols:[]},
+  {k:"c6", n:"今日成交量 ≤ 昨日一半", cols:[]},
+  {k:"c7", n:"今日收盤價低於五日線", cols:[]},
+  {k:"c8", n:"投信最近兩日各自買超", cols:["F","Fp","F2"]},
+  {k:"c9", n:"上月綠 K、當月截至資料日紅 K", cols:["pmO","pmC","cmO"]},
+  {k:"c10", n:"低點高於前日且成交量減少", cols:["l","lp"]},
+];
+const MACD_COLS = ["dif","dea","histp","hist","mn"];
+
+// ---------- 格式 ----------
+const fmtD = d => d ? `${d.slice(0,4)}/${d.slice(4,6)}/${d.slice(6)}` : "—";
+const fmtDs = d => d ? `${d.slice(4,6)}/${d.slice(6)}` : "—";
+const nf = (x, dg=2) => x==null || !isFinite(x) ? "—" : x.toLocaleString("zh-TW",{minimumFractionDigits:dg,maximumFractionDigits:dg});
+const lots = x => x==null ? "—" : Math.round(x/1000).toLocaleString("zh-TW");
+const pct = x => x==null || !isFinite(x) ? "—" : (x>0?"+":"")+x.toFixed(2)+"%";
+const cls = x => x==null ? "" : x>0 ? "up" : x<0 ? "dn" : "";
+const tri = v => v===true ? "是" : v===false ? "否" : "未判定";
+const esc = s => String(s).replace(/[&<>"]/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+
+const COLDEF = {
+  name:{h:"股票名稱",l:1,v:r=>r.name}, code:{h:"代號",l:1,v:r=>r.code}, mkt:{h:"市場",l:1,v:r=>r.mkt},
+  c:{h:"收盤價",v:r=>nf(r.c)}, chg:{h:"今日漲跌幅",v:r=>pct(r.chg),c:r=>cls(r.chg),x:r=>r.chg?.toFixed(2)},
+  ma5:{h:"今日五日線",s:"五日線",v:r=>nf(r.ma5)}, ma5p:{h:"昨日五日線",s:"昨五日線",v:r=>nf(r.ma5p)},
+  o:{h:"今日開盤",s:"開盤",v:r=>nf(r.o)}, h:{h:"今日最高",s:"最高",v:r=>nf(r.h)}, hp:{h:"前日最高",s:"前日最高",v:r=>nf(r.hp)},
+  vol:{h:"今日量(張)",s:"今日量(張)",v:r=>lots(r.v),x:r=>r.v==null?"":Math.round(r.v/1000)},
+  volp:{h:"前日量(張)",s:"前日量(張)",v:r=>lots(r.vp),x:r=>r.vp==null?"":Math.round(r.vp/1000)},
+  vinc:{h:"量增幅",s:"量增幅",v:r=>r.vp===0?"無法計算":pct(r.vinc),c:r=>cls(r.vinc),x:r=>r.vp===0?"無法計算":r.vinc==null?"":r.vinc.toFixed(2)},
+  last:{h:"前次符合日",s:"前次符合",v:r=>fmtD(lastHit(r))},
+  l:{h:"今日最低",s:"最低",v:r=>nf(r.l)}, lp:{h:"前日最低",s:"前日最低",v:r=>nf(r.lp)},
+  lu20d:{h:"最近收盤漲停日",s:"最近漲停日",v:r=>fmtD(r.lu20d)}, limit:{h:"今日漲停價",s:"漲停價",v:r=>nf(r.limit)},
+  luPrev:{h:"前日收盤漲停",s:"前日漲停",v:r=>tri(r.f.luPrev)},
+  F:{h:"投信今日(張)",s:"投信今日",v:r=>lots(r.F),c:r=>cls(r.F),x:r=>r.F==null?"":Math.round(r.F/1000)},
+  Fp:{h:"投信前日(張)",s:"投信前日",v:r=>lots(r.Fp),c:r=>cls(r.Fp),x:r=>r.Fp==null?"":Math.round(r.Fp/1000)},
+  F2:{h:"投信兩日合計(張)",s:"投信兩日",v:r=>r.F==null||r.Fp==null?"—":lots(r.F+r.Fp),c:r=>cls((r.F??0)+(r.Fp??0))},
+  dispP:{h:"處置期間",s:"處置期間",l:1,v:r=>r.disp?`${fmtD(r.disp.start)}～${fmtD(r.disp.end)}`:"—",m:r=>r.disp?`${fmtDs(r.disp.start)}～${fmtDs(r.disp.end)}`:"—"},
+  dispK:{h:"處置措施",s:"處置措施",l:1,v:r=>r.disp?.kind||"—"},
+  pmO:{h:"上月開盤",s:"上月開",v:r=>nf(r.pmO)}, pmC:{h:"上月收盤",s:"上月收",v:r=>nf(r.pmC)}, cmO:{h:"當月開盤",s:"當月開",v:r=>nf(r.cmO)},
+  dif:{h:"DIF",s:"DIF",v:r=>nf(r.dif,4)}, dea:{h:"訊號線",s:"訊號線",v:r=>nf(r.dea,4)},
+  histp:{h:"昨日MACD柱",s:"昨日柱",v:r=>nf(r.histp,4),c:r=>cls(r.histp)}, hist:{h:"今日MACD柱",s:"今日柱",v:r=>nf(r.hist,4),c:r=>cls(r.hist)},
+  mn:{h:"MACD歷史筆數",s:"MACD筆數",v:r=>r.mn??"—"},
+};
+const BASE_COLS = ["name","code","mkt","c","chg","ma5","ma5p","o","h","hp","vol","volp","vinc"];
+// 手機卡片：常駐顯示的基本欄位（其餘基本欄位點開才顯示）
+const CARD_MAIN = ["vol","vinc","ma5"];
+const CARD_MORE = ["ma5p","o","h","hp","volp"];
+
+// ---------- 狀態 ----------
+let DATA = null, cur = "s1", LIST = [], shown = 0;
+const PAGE = 60;
+const mq = window.matchMedia("(max-width:760px)");
+const store = {
+  get(k, d){ try{ const v = localStorage.getItem(k); return v==null ? d : JSON.parse(v);}catch(e){ return d; } },
+  set(k, v){ try{ localStorage.setItem(k, JSON.stringify(v)); }catch(e){} }
+};
+let combos = store.get("tw-screener-combos", {});
+
+function lastHit(r){ return cur==="custom" ? null : r.last?.[cur]; }
+function AND(xs){ if (xs.some(x=>x===false)) return false; if (xs.some(x=>x==null)) return null; return true; }
+function customSel(){ return { conds: CONDS.filter(c=>$("#cb_"+c.k).checked).map(c=>c.k), macd: $("#macdSel").value }; }
+function stratFlag(r){
+  if (cur !== "custom") return r.f[cur];
+  const s = customSel(); const xs = s.conds.map(k=>r.f[k]); if (s.macd) xs.push(r.f[s.macd]);
+  return xs.length ? AND(xs) : true;
+}
+function extraCols(){
+  let extra = [];
+  if (cur === "custom"){
+    const s = customSel();
+    s.conds.forEach(k=>extra.push(...CONDS.find(c=>c.k===k).cols));
+    if (s.macd) extra.push(...MACD_COLS);
+  } else extra = [...STRATS.find(s=>s.k===cur).cols];
+  if ($("#addTrust").checked) extra.push("F","Fp","F2");
+  return [...new Set(extra)];
+}
+function columns(){
+  const cols = [...BASE_COLS, ...extraCols()];
+  if (cur !== "custom") cols.push("last");
+  return cols;
+}
+
+// ---------- 篩選 ----------
+function compute(){
+  const q = $("#q").value.trim().toLowerCase(), mkt = $("#mkt").value;
+  const minC = parseFloat($("#minClose").value), minV = $("#minVinc").value.trim()===""?null:parseFloat($("#minVinc").value);
+  const trust = $("#addTrust").checked;
+  const o = {base:0, missing:0, yes:[], und:[], yesT:0, undT:0, yesA:0, undA:0};
+  for (const r of DATA.rows){
+    if (mkt && r.mkt !== mkt) continue;
+    if (q && !(r.code.includes(q) || r.name.toLowerCase().includes(q))) continue;
+    if (r.c == null){ o.missing++; continue; }
+    if (isFinite(minC) && r.c < minC) continue;
+    o.base++;
+    const conds = [stratFlag(r)];
+    if (minV != null && isFinite(minV)) conds.push(r.vinc==null ? null : r.vinc >= minV);
+    const a = AND(conds), b = AND([a, r.f.c8]);
+    if (a===true) o.yesA++; else if (a==null) o.undA++;
+    if (b===true) o.yesT++; else if (b==null) o.undT++;
+    const use = trust ? b : a;
+    if (use===true) o.yes.push(r); else if (use==null) o.und.push(r);
+  }
+  return o;
+}
+
+function run(){
+  if (!DATA) return;
+  const res = compute(), trust = $("#addTrust").checked;
+  let list = res.yes.map(r=>({...r,_und:false}));
+  if ($("#showUnd").checked) list = list.concat(res.und.map(r=>({...r,_und:true})));
+  sortList(list);
+  LIST = list;
+  const sname = cur==="custom" ? "自訂條件" : STRATS.find(s=>s.k===cur).n;
+  const und = trust ? res.undT : res.undA;
+  $("#counts").innerHTML = `
+    <span><span class="big">${res.yesA}</span> 檔 未另加投信</span>
+    <span><span class="big">${res.yesT}</span> 檔 另加投信</span>
+    <span class="${und?'pend':''}">未判定 ${und} 檔</span>
+    <span class="sub">${esc(sname)}｜通過共同篩選 ${res.base} 檔｜無收盤價 ${res.missing} 檔｜列表顯示：${trust?"另加投信連兩日買超":"未另加投信"}${und?"｜未判定＝資料不足，不等於不成立":""}</span>`;
+  render();
+}
+
+function sortList(list){
+  const s = $("#sort").value, N = x => x==null || !isFinite(x) ? -Infinity : x;
+  const f = {
+    cDesc:(a,b)=>N(b.c)-N(a.c), cAsc:(a,b)=>(a.c??Infinity)-(b.c??Infinity), chg:(a,b)=>N(b.chg)-N(a.chg),
+    vinc:(a,b)=>N(b.vinc)-N(a.vinc), vol:(a,b)=>N(b.v)-N(a.v),
+    trust:(a,b)=>N(b.F==null||b.Fp==null?null:b.F+b.Fp)-N(a.F==null||a.Fp==null?null:a.F+a.Fp),
+    code:(a,b)=>a.code.localeCompare(b.code),
+  }[s];
+  list.sort((a,b)=> (a._und?1:0)-(b._und?1:0) || f(a,b));
+}
+
+function emptyMsg(){ return DATA.rows.length ? "目前條件無符合個股（若有未判定，可在「篩選・排序」勾選「列出未判定」查看）" : "此日期無資料"; }
+
+function render(){ if (mq.matches) renderCards(true); else renderTable(); }
+
+function renderTable(){
+  const cols = columns();
+  $("#tbl thead").innerHTML = "<tr>"+cols.map(k=>`<th class="${COLDEF[k].l?'l':''}">${COLDEF[k].h}</th>`).join("")+"</tr>";
+  if (!LIST.length){ $("#tbl tbody").innerHTML = `<tr><td colspan="${cols.length}" class="empty">${emptyMsg()}</td></tr>`; return; }
+  $("#tbl tbody").innerHTML = LIST.slice(0,3000).map(r=>`<tr class="${r._und?'und':''}">`+cols.map(k=>{
+    const d = COLDEF[k]; let v = esc(d.v(r));
+    if (k==="name" && r._und) v += '<span class="badge">未判定</span>';
+    return `<td class="${d.l?'l':''} ${d.c?d.c(r):''}">${v}</td>`;
+  }).join("")+"</tr>").join("");
+}
+
+function card(r){
+  const extra = extraCols();
+  const main = [...new Set([...extra, ...CARD_MAIN])];
+  const more = CARD_MORE.filter(k=>!main.includes(k));
+  if (cur !== "custom") more.push("last");
+  const kv = (k, m) => { const d = COLDEF[k]; return `<div class="${m?'more':''}"><span>${d.s||d.h}</span><b class="${d.c?d.c(r):''}">${esc((d.m||d.v)(r))}</b></div>`; };
+  return `<article class="card ${r._und?'und':''}">
+    <div class="ctop"><div><div class="cname">${esc(r.name)}${r._und?'<span class="badge">未判定</span>':''}</div>
+      <div class="cmeta">${r.code}・${r.mkt}</div></div>
+      <div class="cprice"><div class="px">${nf(r.c)}</div><div class="pc ${cls(r.chg)}">${pct(r.chg)}</div></div></div>
+    <div class="kv">${main.map(k=>kv(k,false)).join("")}${more.map(k=>kv(k,true)).join("")}</div>
+    <div class="toggle">點一下看更多 ▾</div></article>`;
+}
+function renderCards(reset){
+  const box = $("#cards");
+  if (reset){ shown = 0; box.innerHTML = ""; }
+  if (!LIST.length){ box.innerHTML = `<div class="panel empty">${emptyMsg()}</div>`; return; }
+  box.querySelector(".moreBtn")?.remove();
+  const next = LIST.slice(shown, shown + PAGE);
+  box.insertAdjacentHTML("beforeend", next.map(card).join(""));
+  shown += next.length;
+  if (shown < LIST.length) box.insertAdjacentHTML("beforeend", `<button class="moreBtn">再顯示 ${Math.min(PAGE, LIST.length-shown)} 檔（共 ${LIST.length}）</button>`);
+}
+$("#cards").addEventListener("click", e=>{
+  if (e.target.closest(".moreBtn")) return renderCards(false);
+  const c = e.target.closest(".card"); if (!c) return;
+  c.classList.toggle("open");
+  c.querySelector(".toggle").textContent = c.classList.contains("open") ? "收合 ▴" : "點一下看更多 ▾";
+});
+mq.addEventListener?.("change", ()=>DATA && render());
+
+// ---------- 匯出 ----------
+function exportCsv(){
+  if (!DATA) return;
+  const cols = columns();
+  const q = s => { s = s==null?"":String(s); return /[",\n]/.test(s) ? '"'+s.replace(/"/g,'""')+'"' : s; };
+  const raw = k => { const d = COLDEF[k]; return d.x ? (r=>d.x(r)) : (r=>{ const v = d.v(r); return v==="—"?"":String(v).replace(/,/g,""); }); };
+  const lines = [[...cols.map(k=>COLDEF[k].h), "判定"].map(q).join(",")];
+  for (const r of LIST) lines.push([...cols.map(k=>raw(k)(r)), r._und?"未判定":"符合"].map(q).join(","));
+  const sname = cur==="custom" ? ($("#comboSel").value || "自訂條件") : STRATS.find(s=>s.k===cur).n;
+  const meta = `# 資料日期 ${fmtD(DATA.date)}，策略 ${sname}，最低收盤價 ${$("#minClose").value}，市場 ${$("#mkt").value||"全部"}，${$("#addTrust").checked?"另加投信連兩日買超":"未另加投信"}`;
+  const name = `台股篩選_${sname}_${DATA.date}.csv`;
+  const blob = new Blob(["﻿"+meta+"\n"+lines.join("\n")], {type:"text/csv;charset=utf-8"});
+  const file = typeof File === "function" ? new File([blob], name, {type:"text/csv"}) : null;
+  if (mq.matches && file && navigator.canShare?.({files:[file]})) { navigator.share({files:[file], title:name}).catch(()=>{}); return; }
+  const a = document.createElement("a"); a.href = URL.createObjectURL(blob);
+  a.download = name; a.click(); setTimeout(()=>URL.revokeObjectURL(a.href), 2000);
+}
+
+// ---------- 狀態列 ----------
+function statusBar(){
+  const s = DATA.status, ps = DATA.prevStatus || {};
+  const ic = ok => ok ? '<b class="ok">✓</b>' : '<b class="pend">待補</b>';
+  const dc = DATA.disposalCovered || {};
+  const dispOk = (dc["上市"]||"") >= DATA.date && (dc["上櫃"]||"") >= DATA.date;
+  const instOk = s.inst_twse && s.inst_tpex;
+  const open = $("#statusBar").open;
+  $("#statusBar").innerHTML = `
+    <summary><span>資料 <b>${fmtD(DATA.date)}</b></span><span>上市${ic(s.twse)}</span><span>上櫃${ic(s.tpex)}</span><span>投信${ic(instOk)}</span><span>處置${dispOk?'<b class="ok">✓</b>':'<b class="pend">待核對</b>'}</span></summary>
+    <div class="statusDetail">
+      <span>前一交易日 <b>${fmtD(DATA.prevDate)}</b></span>
+      <span>上市行情 ${ic(s.twse)}</span><span>上櫃行情 ${ic(s.tpex)}</span><span>上市投信 ${ic(s.inst_twse)}</span><span>上櫃投信 ${ic(s.inst_tpex)}</span>
+      <span>處置公告涵蓋：上市至 <b>${fmtD(dc["上市"])}</b>、上櫃至 <b>${fmtD(dc["上櫃"])}</b></span>
+      <span>MACD 歷史起點 <b>${fmtD(DATA.historyStart)}</b>（截至本日 ${DATA.historyCount} 個交易日）</span>
+      <span>來源：臺灣證券交易所、證券櫃檯買賣中心</span>
+    </div>`;
+  $("#statusBar").open = open;
+  const warns = [];
+  if (!s.twse || !s.tpex) warns.push(`本日${!s.twse?"上市":""}${!s.twse&&!s.tpex?"、":""}${!s.tpex?"上櫃":""}行情待補，結果僅涵蓋已載入市場，不代表另一市場無符合個股。`);
+  if (!instOk || (DATA.prevStatus && (!ps.inst_twse || !ps.inst_tpex))) warns.push("投信資料（今日或前一交易日）有缺，投信相關條件於缺漏市場顯示為未判定。");
+  if (!dispOk) warns.push("處置公告尚未涵蓋至本日，「下一交易日出關」結果待核對。");
+  if (DATA.historyCount < 120) warns.push(`歷史資料僅 ${DATA.historyCount} 個交易日，MACD 需至少 120 筆，相關策略將顯示未判定。`);
+  $("#warnBox").style.display = warns.length ? "block" : "none";
+  $("#warnBox").innerHTML = warns.join("<br>");
+}
+
+// ---------- 載入 ----------
+// 本機版走 api/；網路版（GitHub Pages）讀預先產生的 data/*.json
+let STATIC = false;
+async function getDates(){
+  try { const r = await fetch("api/dates", {cache:"no-store"}); if (r.ok) return await r.json(); } catch(e){}
+  const r = await fetch("data/dates.json", {cache:"no-store"}); if (!r.ok) throw new Error("no data");
+  STATIC = true; return await r.json();
+}
+async function loadDates(keep){
+  const j = await getDates();
+  if (STATIC){
+    $("#btnUpdate").style.display = "none";
+    $("#jobMsg").innerHTML = `資料更新於 ${esc(j.generatedAt||"")}`;
+    j.job = {running:false};
+  }
+  const sel = $("#date"), prev = sel.value;
+  sel.innerHTML = j.dates.map(d=>{
+    const part = !(d.twse && d.tpex && d.inst_twse && d.inst_tpex);
+    return `<option value="${d.date}">${fmtD(d.date)}${part?"（部分）":""}</option>`;
+  }).join("");
+  if (keep && prev && j.dates.some(d=>d.date===prev)) sel.value = prev;
+  if (STATIC) return j.dates.length;
+  showJob(j.job);
+  if (j.job.running) setTimeout(pollJob, 1500);
+  return j.dates.length;
+}
+async function loadScreen(){
+  const d = $("#date").value;
+  if (!d) { $("#statusBar").innerHTML = "<summary>尚無資料，請按「更新」。</summary>"; return; }
+  $("#counts").innerHTML = `<span class="sub">計算中…</span>`;
+  DATA = await (await fetch(STATIC ? `data/screen/${d}.json` : "api/screen?date="+d)).json();
+  statusBar(); run();
+}
+function showJob(job){
+  $("#btnUpdate").disabled = !!job.running;
+  $("#jobMsg").innerHTML = job.error ? `<span class="bad">更新失敗：${esc(job.error)}</span>` : (job.running ? `<span class="pend">${esc(job.msg)}</span>` : "");
+}
+async function pollJob(){
+  const j = await (await fetch("api/update")).json(); showJob(j);
+  if (j.running) setTimeout(pollJob, 1500);
+  else { await loadDates(true); await loadScreen(); if (!j.error) { $("#jobMsg").textContent = "已更新"; setTimeout(()=>$("#jobMsg").textContent="", 3000); } }
+}
+
+// ---------- UI ----------
+function openSheet(on){ $("#filters").classList.toggle("open", on); $("#backdrop").classList.toggle("open", on); }
+function buildUI(){
+  $("#tabs").innerHTML = STRATS.map((s,i)=>`<span class="tab" role="button" tabindex="0" data-k="${s.k}">${s.k==="custom"?"":(i+1)+". "}${s.n}</span>`).join("");
+  $("#condGrid").innerHTML = CONDS.map((c,i)=>`<label><input type="checkbox" id="cb_${c.k}">${i+1}. ${c.n}</label>`).join("");
+  document.querySelectorAll(".tab").forEach(t=>{ t.onclick=()=>selectStrat(t.dataset.k); t.onkeydown=e=>{ if(e.key==="Enter") selectStrat(t.dataset.k); }; });
+  ["q","minClose","minVinc"].forEach(id=>$("#"+id).addEventListener("input", run));
+  ["mkt","addTrust","sort","showUnd","macdSel"].forEach(id=>$("#"+id).addEventListener("change", run));
+  CONDS.forEach(c=>$("#cb_"+c.k).addEventListener("change", run));
+  $("#date").onchange = loadScreen;
+  $("#btnReset").onclick = ()=>{ $("#q").value=""; $("#mkt").value=""; $("#minClose").value=200; $("#minVinc").value=""; $("#addTrust").checked=false; $("#sort").value="cDesc"; $("#showUnd").checked=false; run(); };
+  $("#btnExport").onclick = $("#btnExport2").onclick = exportCsv;
+  $("#btnFilter").onclick = ()=>openSheet(true);
+  $("#btnDone").onclick = $("#backdrop").onclick = ()=>openSheet(false);
+  $("#btnTop").onclick = ()=>window.scrollTo({top:0,behavior:"smooth"});
+  $("#btnUpdate").onclick = async ()=>{ await fetch("api/update",{method:"POST"}); pollJob(); };
+  $("#btnSave").onclick = ()=>{
+    const n = $("#comboName").value.trim(); if (!n) { $("#comboName").focus(); return; }
+    combos[n] = customSel(); store.set("tw-screener-combos", combos); fillCombos(n);
+  };
+  $("#comboSel").onchange = ()=>{
+    const c = combos[$("#comboSel").value]; if (!c) return;
+    CONDS.forEach(x=>$("#cb_"+x.k).checked = c.conds.includes(x.k)); $("#macdSel").value = c.macd||"";
+    $("#comboName").value = $("#comboSel").value; run();
+  };
+  $("#btnDel").onclick = ()=>{ const n = $("#comboSel").value; if (!n) return; if (!confirm(`刪除組合「${n}」？`)) return; delete combos[n]; store.set("tw-screener-combos", combos); fillCombos(""); };
+  fillCombos("");
+}
+function fillCombos(sel){
+  $("#comboSel").innerHTML = `<option value="">—</option>`+Object.keys(combos).map(n=>`<option>${esc(n)}</option>`).join("");
+  $("#comboSel").value = sel;
+}
+function selectStrat(k){
+  cur = k;
+  document.querySelectorAll(".tab").forEach(t=>{
+    const on = t.dataset.k===k; t.classList.toggle("on", on);
+    if (on) t.scrollIntoView({block:"nearest", inline:"center", behavior:"smooth"});
+  });
+  const s = STRATS.find(x=>x.k===k);
+  $("#desc").innerHTML = s.d + (k!=="custom" ? "<br>共同條件：收盤價 ≥ 最低收盤價；各策略獨立篩選、不疊加。" : "");
+  $("#customPanel").classList.toggle("on", k==="custom");
+  store.set("tw-screener-strat", k);
+  run();
+}
+
+$("#foot").innerHTML = `符號：t＝所選交易日、p＝前一交易日（非日曆昨天）。成交量(張)＝成交股數/1000；投信買超(張)＝投信買賣超股數/1000；量增幅＝(今日量/前日量−1)×100，前日量為 0 時標示無法計算；今日漲跌幅＝(收盤/當日參考價−1)×100。<br>
+收盤漲停：上櫃採櫃買中心公告之「次日漲停價」；上市以證交所當日參考價（收盤−漲跌價差）×1.1 依升降單位捨去計算。MACD(12,26,9)，未還原日收盤價，EMA 以 SMA 初始化，柱體＝2×(DIF−訊號線)，不足 120 筆或缺最新兩日資料標示未判定。<br>
+「前次符合日」＝所選日期之前，該股最近一次符合同一策略的交易日。資料不足一律列為「未判定」，不視為不成立。本工具僅供研究參考，非投資建議。`;
+
+buildUI(); selectStrat(store.get("tw-screener-strat", "s1"));
+loadDates(false).then(n=>{ if (n) loadScreen(); else $("#statusBar").innerHTML = "<summary>尚無資料，請按「更新」（首次約需 20–30 分鐘回補歷史）。</summary>"; })
+  .catch(()=>{ $("#statusBar").innerHTML = "<summary>無法載入資料：請確認網路連線（本機版請確認「啟動篩選平台.bat」正在執行）。</summary>"; });
+if (!mq.matches && location.hostname.match(/^(localhost|127\.|192\.168\.|10\.)/)) fetch("api/info").then(r=>r.json()).then(j=>{
+  if (j.lan?.length) $("#foot").insertAdjacentHTML("afterbegin", `<div class="panel" style="color:var(--ink)">📱 手機（與這台電腦連同一個 Wi‑Fi）用瀏覽器開啟：<b>${j.lan.map(esc).join("　或　")}</b>，再用「加入主畫面」放到手機桌面。</div>`);
+}).catch(()=>{});
+if ("serviceWorker" in navigator && window.isSecureContext) navigator.serviceWorker.register("sw.js").catch(()=>{});
+</script>
+</body>
+</html>

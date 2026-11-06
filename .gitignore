@@ -1,0 +1,5 @@
+site/
+.claude/
+__pycache__/
+fetch_log.txt
+*.pyc
