@@ -43,6 +43,13 @@ def calc_limit_up(ref):
     return float((raw / t).to_integral_value(rounding=ROUND_FLOOR) * t)
 
 
+def calc_limit_down(ref):
+    """參考價 ×0.9，按升降單位無條件進位。"""
+    raw = Decimal(str(ref)) * Decimal("0.9")
+    t = tick(raw)
+    return float((raw / t).to_integral_value(rounding="ROUND_CEILING") * t)
+
+
 def ema_series(vals, n):
     """SMA 初始化的 EMA；回傳與 vals 等長，前 n-1 筆為 None。"""
     out = [None] * len(vals)
@@ -336,10 +343,12 @@ class Engine:
                     r[kk] = None
             rows.append(r)
         cov = self.disp_db.get("covered", {})
-        picks, market = self._picks(rows, date)
+        picks, alerts, market, comment = self._picks(rows, date)
         return {
             "picks": picks,
+            "alerts": alerts,
             "market": market,
+            "comment": comment,
             "date": date,
             "prevDate": self.days[i - 1] if i > 0 else None,
             "status": self.status[date],
@@ -356,60 +365,153 @@ class Engine:
     PICK_MIN_LOTS = 500
     PICK_TOP = 12
 
+    ALERT_TOP = 12
+
+    def _nh(self, code, i):
+        """(收盤創前 60 日新高, 創前 60 日新低, 創資料期間新高)，結果快取。"""
+        cache = self.__dict__.setdefault("_nh_cache", {})
+        key = (code, i)
+        if key in cache:
+            return cache[key]
+        bars = self.bars[code]
+        b = bars[i]
+        res = (None, None, None)
+        if b and b[5] is not None:
+            c = b[5]
+            prev_c = [bars[j][5] for j in range(max(0, i - 60), i) if bars[j] and bars[j][5] is not None]
+            nh = nl = na = None
+            if len(prev_c) >= 40:
+                nh, nl = c > max(prev_c), c < min(prev_c)
+            P = self.pre[code]
+            k = P["upto"][i - 1] if i > 0 else -1  # 前一日（含）之前的收盤筆數-1
+            if k + 1 >= 100:
+                if "cmax" not in P:
+                    m, acc = float("-inf"), []
+                    for x in P["closes"]:
+                        m = max(m, x); acc.append(m)
+                    P["cmax"] = acc
+                na = c > P["cmax"][k]
+            res = (nh, nl, na)
+        cache[key] = res
+        return res
+
+    def _price_state(self, code, i):
+        """純價格強弱狀態（只看收盤價、漲跌停，不用均線/MACD/籌碼）。"""
+        bars, P = self.bars[code], self.pre[code]
+        b = bars[i]
+        if not b or b[5] is None:
+            return None
+        c, h = b[5], b[3]
+        nh, nl, na = self._nh(code, i)
+        st = {"nh60": nh, "nl60": nl, "nhAll": na}
+        # 連漲天數（收盤 > 前一日收盤）
+        up, j = 0, i
+        while j > 0 and bars[j] and bars[j - 1] and bars[j][5] is not None and bars[j - 1][5] is not None and bars[j][5] > bars[j - 1][5]:
+            up += 1; j -= 1
+        st["upDays"] = up
+        c3 = bars[i - 3][5] if i >= 3 and bars[i - 3] else None
+        st["gain3"] = (c / c3 - 1) * 100 if c3 else None
+        lim, lp = P["lim"], P["limit_px"][i]
+        st["lu"] = lim[i] is True
+        st["luPrev"] = i > 0 and lim[i - 1] is True
+        st["touchLU"] = bool(lp and h is not None and h >= lp - 1e-6 and c < lp - 1e-6)
+        ref = round(c - b[7], 4) if b[7] is not None else None
+        st["ld"] = bool(ref and ref > 0 and abs(c - calc_limit_down(ref)) < 1e-6)
+        lows5 = [bars[j][4] for j in range(max(0, i - 5), i) if bars[j] and bars[j][4] is not None]
+        st["breakLow5"] = bool(lows5) and c < min(lows5)
+        # 近 10 日內是否曾創 60 日收盤新高
+        st["recentNH"] = any(self._nh(code, k)[0] for k in range(max(1, i - 10), i))
+        # 突破整數關卡
+        pc = bars[i - 1][5] if i > 0 and bars[i - 1] else None
+        step = 10 if c < 100 else 50 if c < 1000 else 100 if c < 5000 else 500
+        lvl = int(c // step) * step
+        st["round"] = lvl if (pc is not None and lvl > 0 and pc < lvl <= c) else None
+        return st
+
     def _picks(self, rows, date):
-        """今日選股觀察：依多策略共振計分排序（規則固定、可重現），附入選理由與風險提示。"""
+        """強勢股觀察：以價格強弱為核心（漲停、收盤創新高、突破前高／整數關卡、連漲、逆勢不跌），
+        並列出強勢股轉弱的出場警示。規則固定、可重現。"""
+        i = self.didx[date]
         traded = [r for r in rows if r["c"] is not None and r["chg"] is not None]
         up = sum(1 for r in traded if r["chg"] > 0)
         down = sum(1 for r in traded if r["chg"] < 0)
-        lu = sum(1 for r in traded if r["limit"] and abs(r["c"] - r["limit"]) < 1e-6)
-        market = {"traded": len(traded), "up": up, "down": down, "flat": len(traded) - up - down, "limitUp": lu,
-                  "strat": {k: sum(1 for r in rows if r["c"] is not None and r["c"] >= self.PICK_MIN_CLOSE and r["f"][k] is True)
-                            for k in STRAT_KEYS}}
-        out = []
+        states = {r["code"]: self._price_state(r["code"], i) for r in traded}
+        cnt = lambda key: sum(1 for s in states.values() if s and s.get(key))
+        nh, nl, lu, ld = cnt("nh60"), cnt("nl60"), cnt("lu"), cnt("ld")
+        # 前一交易日的新高家數（比較市場熱度）
+        nh_prev = sum(1 for code in self.bars if self._nh(code, i - 1)[0]) if i > 0 else None
+        weak = down > up * 1.5
+        strong_mkt = up > down * 1.5
+        market = {"traded": len(traded), "up": up, "down": down, "flat": len(traded) - up - down,
+                  "limitUp": lu, "limitDown": ld, "newHigh": nh, "newLow": nl, "newHighPrev": nh_prev,
+                  "tone": "弱" if weak else "強" if strong_mkt else "中性"}
+        picks, alerts = [], []
         for r in traded:
-            f = r["f"]
-            if r["c"] < self.PICK_MIN_CLOSE or (r["v"] or 0) < self.PICK_MIN_LOTS * 1000:
+            s = states.get(r["code"])
+            if not s or r["c"] < self.PICK_MIN_CLOSE or (r["v"] or 0) < self.PICK_MIN_LOTS * 1000:
                 continue
-            in_disp = r["disp"] and r["disp"]["start"] <= date <= r["disp"]["end"] and f["s7"] is not True
-            if in_disp:
-                continue  # 處置中（分盤撮合、流動性受限）不列入，出關日除外
+            in_disp = r["disp"] and r["disp"]["start"] <= date <= r["disp"]["end"] and r["f"]["s7"] is not True
+            # ---- 出場警示（強勢股轉弱）----
+            warn = []
+            if s["luPrev"] and r["chg"] < 0:
+                warn.append("漲停次日轉跌")
+            if s["touchLU"] and r["chg"] < 0:
+                warn.append("盤中觸及漲停後翻黑")
+            if s["upDays"] >= 3 and (s["gain3"] or 0) >= 15 and (r["vinc"] or 0) >= 100:
+                warn.append(f"連漲 {s['upDays']} 日後爆量（量增 {r['vinc']:.0f}%）")
+            if s["recentNH"] and s["breakLow5"]:
+                warn.append("近期創高後跌破前 5 日低點（支撐）")
+            if warn:
+                alerts.append({"code": r["code"], "name": r["name"], "mkt": r["mkt"], "c": r["c"], "chg": r["chg"],
+                               "v": r["v"], "vinc": r["vinc"], "warn": warn})
+            # ---- 強勢股觀察 ----
+            if in_disp or s["ld"] or r["chg"] < 0:
+                continue  # 處置中、跌停、當日下跌不列入（只追強勢股）
             score, why, risk = 0, [], []
             def add(pts, text):
                 nonlocal score
                 score += pts; why.append(text)
-            if f["s1"]:
-                add(3, f"突破昨高且量增 {r['vinc']:.0f}%" if r["vinc"] is not None else "突破昨高且量增")
-            if f["s11"]: add(3, "日MACD 由綠翻紅")
-            elif f["s10"]: add(2, "日MACD 紅柱增長")
-            elif f["s9"]: add(1, "日MACD 綠柱縮短")
-            if f["s6"]:
-                add(2, f"投信連兩日買超（合計 {round((r['F'] + r['Fp']) / 1000):,} 張）")
-            if f["s8"]: add(2, "月K由綠轉紅")
-            if f["s4"]: add(2, "五日線上揚、量縮一半（價穩量縮）")
-            elif f["s5"]: add(1, "低點墊高、量縮")
-            if f["c5"] and f["c7"] is False:
-                add(1, "收盤站上上揚的五日線")
-            if f["s7"]: add(1, "處置最後一日，下一交易日出關")
-            if len(why) < 2 or score < 4:
+            if s["lu"]: add(3, "收盤漲停")
+            if s["nh60"]:
+                add(3, "收盤創 60 日新高")
+                if s["nhAll"]: add(1, "創資料期間（約半年）新高")
+            if s["upDays"] >= 3 and not s["lu"]: add(2, f"連漲 {s['upDays']} 日・漲不停")
+            if weak and r["chg"] >= 0: add(2, f"大盤弱勢（{up} 漲／{down} 跌）中逆勢{'收紅' if r['chg'] > 0 else '平盤'}")
+            if s["round"]: add(1, f"突破整數關卡 {s['round']:,}")
+            if r["f"]["s1"]: add(1, "突破昨高且量增")
+            if score < 3:
                 continue
-            if r["limit"] and abs(r["c"] - r["limit"]) < 1e-6:
-                risk.append("今日收漲停，追價風險高")
-            elif r["chg"] >= 7:
-                risk.append(f"今日已漲 {r['chg']:.1f}%，留意追高")
-            if r["chg"] <= -5:
-                risk.append(f"今日跌 {abs(r['chg']):.1f}%")
             if r["vinc"] is not None and r["vinc"] > 200:
-                risk.append("爆量，留意隔日量能能否延續")
-            if f["c7"]:
-                risk.append("收盤仍在五日線下")
-            if f["c3"] and f["c7"]:
-                risk.append("近 20 日曾漲停但已跌破五日線")
-            if f["c8"] is None:
-                risk.append("投信資料未公布")
-            out.append({"code": r["code"], "name": r["name"], "mkt": r["mkt"], "c": r["c"], "chg": r["chg"],
-                        "v": r["v"], "vinc": r["vinc"], "score": score, "why": why, "risk": risk})
-        out.sort(key=lambda x: (-x["score"], -(x["vinc"] if x["vinc"] is not None else -1e9)))
-        return out[:self.PICK_TOP], market
+                risk.append(f"爆量（量增 {r['vinc']:.0f}%），留意漲勢是否趨緩")
+            if s["upDays"] >= 3 and (s["gain3"] or 0) >= 15:
+                risk.append(f"3 日已漲 {s['gain3']:.0f}%，避免追高重押")
+            if warn:
+                risk.extend(warn)
+            picks.append({"code": r["code"], "name": r["name"], "mkt": r["mkt"], "c": r["c"], "chg": r["chg"],
+                          "v": r["v"], "vinc": r["vinc"], "score": score, "why": why, "risk": risk})
+        picks.sort(key=lambda x: (-x["score"], -x["chg"]))
+        alerts.sort(key=lambda x: (-len(x["warn"]), x["chg"]))
+        picks, alerts = picks[:self.PICK_TOP], alerts[:self.ALERT_TOP]
+        # ---- 盤勢評語 ----
+        tone = {"弱": "賣壓明顯、市場偏弱", "強": "買盤積極、市場偏強", "中性": "多空互見"}[market["tone"]]
+        cm = [f"今日上漲 {up} 家、下跌 {down} 家，{tone}。收盤創 60 日新高 {nh} 檔、創新低 {nl} 檔；漲停 {lu} 檔、跌停 {ld} 檔。"]
+        if nh_prev is not None:
+            diff = nh - nh_prev
+            cm.append(f"創新高家數較前一交易日{'增加' if diff > 0 else '減少' if diff < 0 else '持平'}"
+                      f"{'' if diff == 0 else f' {abs(diff)} 檔'}（{nh_prev} → {nh}）。")
+        if nl > nh:
+            cm.append("新低多於新高，強勢股變少：只留仍會漲停、創新高的股票，其餘降低持股，不攤平。")
+        elif nh > nl and up >= down:
+            cm.append("強勢股增加：可從收盤創新高、漲停鎖住的個股中挑選，分散、小量布局。")
+        else:
+            cm.append("盤勢拉鋸：以逆勢不跌、突破前高或整數關卡的個股為主要觀察對象。")
+        if picks:
+            cm.append("今日價格表現最強：" + "、".join(f"{p['name']}（{p['why'][0]}）" for p in picks[:3]) + "。")
+        else:
+            cm.append("今日收盤價 ≥200 元的個股中，沒有符合強勢條件者，宜觀望。")
+        if alerts:
+            cm.append(f"另有 {len(alerts)} 檔強勢股出現轉弱訊號，若持有宜先減碼一半。")
+        return picks, alerts, market, cm
 
     def dates(self):
         return [{"date": d, **self.status[d]} for d in reversed(self.days)]

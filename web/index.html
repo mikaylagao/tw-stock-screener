@@ -144,6 +144,11 @@ body.picksMode #filters,body.picksMode #counts,body.picksMode .tablewrap,body.pi
 .tag.why{background:var(--soft);color:var(--accent-dark)}
 @media (prefers-color-scheme:dark){.tag.why{color:#ffd3e3}}
 .tag.risk{background:var(--warn-bg);color:var(--warn)}
+h3.sec{font-size:18px;margin:0 0 10px;font-weight:700}
+.comment{font-size:15px;line-height:1.85;margin-top:8px}
+.rules{margin:4px 0 0;padding-left:20px;font-size:14px;line-height:1.8}
+.rules li{margin:4px 0}
+.pick.alert{border-color:var(--warn-bg)}
 
 footer{color:var(--muted);font-size:13px;line-height:1.8;padding:8px 0 calc(40px + var(--sab));border-top:1px solid var(--line);margin-top:24px}
 footer p{margin:8px 0}
@@ -256,7 +261,7 @@ dialog ol{padding-left:20px;margin:6px 0 14px;line-height:1.8}
 "use strict";
 const $ = s => document.querySelector(s);
 const STRATS = [
-  {k:"picks", n:"★ 今日選股觀察", d:"依 11 組策略的多策略共振自動計分，列出值得留意的個股、入選理由與風險提示。", cols:[]},
+  {k:"picks", n:"★ 今日選股觀察", d:"以價格強弱為核心：追收盤漲停、創新高、突破前高與整數關卡、連漲、逆勢不跌的強勢股，並列出強勢股轉弱的出場警示。", cols:[]},
   {k:"s1", n:"突破增量", d:"今日最高價高於前一交易日最高價，且今日成交量大於前一交易日。", cols:[]},
   {k:"s2", n:"20日漲停破五日", d:"最近 20 個交易日至少一天收盤漲停，且今日收盤價低於五日線（不要求今天才剛跌破）。", cols:["lu20d","limit"]},
   {k:"s3", n:"漲停收十字", d:"前一交易日收盤漲停，且今日開盤價＝收盤價（嚴格相等）。", cols:["luPrev"]},
@@ -453,22 +458,37 @@ $("#cards").addEventListener("click", e=>{ if (e.target.closest(".moreBtn")) ren
 mq.addEventListener?.("change", ()=>DATA && run());
 
 function renderPicks(){
-  const P = DATA.picks || [], M = DATA.market || {}, st = DATA.status || {};
-  const SN = Object.fromEntries(STRATS.map(s=>[s.k, s.n]));
-  const strat = Object.entries(M.strat||{}).filter(([,n])=>n>0).sort((a,b)=>b[1]-a[1]).slice(0,5).map(([k,n])=>`${esc(SN[k])} ${n} 檔`).join("、");
+  const P = DATA.picks || [], A = DATA.alerts || [], M = DATA.market || {}, st = DATA.status || {};
+  const toneCls = M.tone==="強" ? "up" : M.tone==="弱" ? "dn" : "";
   const head = `<section class="card">
-    <div class="mk"><span>上漲 <b class="up">${M.up??"—"}</b></span><span>下跌 <b class="dn">${M.down??"—"}</b></span><span>平盤 <b>${M.flat??"—"}</b></span><span>收漲停 <b class="up">${M.limitUp??"—"}</b></span></div>
-    <div class="sub2">${fmtD(DATA.date)}・${st.provisional?`暫行版（行情時間 ${esc(st.asOf||"")}）`:"官方收盤資料"}${strat?`｜收盤價 ≥200 元中符合較多的策略：${strat}`:""}</div>
-    <div class="disc">計分方式：突破增量、MACD 由綠翻紅 +3；MACD 紅柱增長、投信連兩日買超、月K由綠轉紅、五日線上揚量縮一半 +2；MACD 綠柱縮短、低點墊高量縮、站上上揚五日線、下一交易日出關 +1。只列收盤價 ≥200 元、成交量 ≥500 張、非處置中，且至少兩項訊號、4 分以上的個股。這是依固定規則產生的觀察名單，不代表任何專家意見，也不是個人化投資建議；進出場請自行判斷並控管風險。</div>
+    <h3 class="sec">今日盤勢 <span class="sub2">${fmtD(DATA.date)}・${st.provisional?`暫行版（行情時間 ${esc(st.asOf||"")}）`:"官方收盤資料"}</span></h3>
+    <div class="mk"><span>市場 <b class="${toneCls}">偏${esc(M.tone||"—")}</b></span><span>上漲 <b class="up">${M.up??"—"}</b></span><span>下跌 <b class="dn">${M.down??"—"}</b></span>
+      <span>創新高 <b class="up">${M.newHigh??"—"}</b></span><span>創新低 <b class="dn">${M.newLow??"—"}</b></span><span>漲停 <b class="up">${M.limitUp??"—"}</b></span><span>跌停 <b class="dn">${M.limitDown??"—"}</b></span></div>
+    <div class="comment">${(DATA.comment||[]).map(esc).join("")}</div>
   </section>`;
+  const rules = `<section class="card">
+    <h3 class="sec">選股邏輯與紀律</h3>
+    <ul class="rules">
+      <li><b>只追強勢股</b>：收盤漲停 +3、收盤創 60 日新高 +3（同時創半年新高再 +1）、連漲 3 日以上 +2、大盤弱勢中逆勢收紅 +2、突破整數關卡 +1、突破昨高且量增 +1；3 分以上入選。只看價格，不用均線、MACD 或籌碼。</li>
+      <li><b>不碰弱勢股</b>：當日下跌、跌停、處置中的不列入；只列收盤價 ≥200 元、成交量 ≥500 張。</li>
+      <li><b>出場訊號</b>：漲停次日轉跌、盤中觸及漲停後翻黑、連漲後爆量、創高後跌破前 5 日低點。漲停鎖住不賣；下跌先砍一半，再跌再砍。</li>
+      <li><b>資金紀律</b>：小量分散（十多檔、每檔少量），總持股不超過資產三成；不融資、不攤平。創新高家數減少、新低增加時降低持股。</li>
+    </ul>
+    <div class="disc">以上是依固定規則自動產生的觀察名單，不是個人化投資建議；進出場請自行判斷並控管風險。</div>
+  </section>`;
+  const alerts = A.length ? `<h3 class="sec" style="margin:18px 2px 10px">出場警示：強勢股轉弱 <span class="sub2">${A.length} 檔</span></h3>
+    <div class="pickGrid">${A.map(a=>`<article class="pick alert">
+      <div class="ptop"><div><div class="pname">${esc(a.name)}</div><div class="pmeta">${a.code}・${a.mkt}・${lots(a.v)} 張${a.vinc!=null?`・量增 ${pct(a.vinc)}`:""}</div></div>
+        <div class="pprice"><div class="px">${nf(a.c)}</div><div class="pc ${cls(a.chg)}">${pct(a.chg)}</div></div></div>
+      <div class="tags">${a.warn.map(w=>`<span class="tag risk">⚠ ${esc(w)}</span>`).join("")}</div></article>`).join("")}</div>` : "";
   const body = P.length ? P.map((p,i)=>`<article class="pick">
     <div class="ptop"><div class="rank">${i+1}</div><div><div class="pname">${esc(p.name)}</div><div class="pmeta">${p.code}・${p.mkt}・${lots(p.v)} 張${p.vinc!=null?`・量增 ${pct(p.vinc)}`:""}</div></div>
       <div class="pprice"><div class="px">${nf(p.c)}</div><div class="pc ${cls(p.chg)}">${pct(p.chg)}</div></div></div>
-    <div class="score">共振分數 <b>${p.score}</b></div>
+    <div class="score">強勢分數 <b>${p.score}</b></div>
     <div class="tags">${p.why.map(w=>`<span class="tag why">${esc(w)}</span>`).join("")}</div>
     ${p.risk.length?`<div class="tags">${p.risk.map(w=>`<span class="tag risk">⚠ ${esc(w)}</span>`).join("")}</div>`:""}
-  </article>`).join("") : `<div class="card empty">今日沒有同時符合多項訊號的個股。</div>`;
-  $("#picksBox").innerHTML = head + `<div class="pickGrid">${body}</div>`;
+  </article>`).join("") : `<div class="card empty">今日沒有符合強勢條件的個股，宜觀望。</div>`;
+  $("#picksBox").innerHTML = head + `<h3 class="sec" style="margin:4px 2px 10px">強勢股觀察 <span class="sub2">${P.length} 檔</span></h3><div class="pickGrid">${body}</div>` + alerts + `<div style="height:16px"></div>` + rules;
   LIST = [];
 }
 
@@ -483,7 +503,7 @@ const csvq = s => { s = s==null?"":String(s); return /[",\n]/.test(s) ? '"'+s.re
 function exportCsv(){
   if (!DATA) return;
   if (cur === "picks"){
-    const lines = ["排名,股票名稱,代號,市場,收盤價,今日漲跌幅(%),成交量(張),量增幅(%),共振分數,入選理由,風險提示"];
+    const lines = ["排名,股票名稱,代號,市場,收盤價,今日漲跌幅(%),成交量(張),量增幅(%),強勢分數,入選理由,風險提示"];
     (DATA.picks||[]).forEach((p,i)=>lines.push([i+1,p.name,p.code,p.mkt,p.c,p.chg?.toFixed(2),Math.round((p.v||0)/1000),p.vinc==null?"":p.vinc.toFixed(2),p.score,p.why.join("；"),p.risk.join("；")].map(csvq).join(",")));
     return download(`今日選股觀察_${DATA.date}${DATA.status?.provisional?"_暫行":""}.csv`, lines.join("\n"));
   }
