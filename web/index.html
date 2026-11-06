@@ -107,6 +107,25 @@ tr.und td{opacity:.7}
 .moreBtn{width:100%;margin:4px 0 10px}
 
 .bottombar{display:none}
+
+/* 今日選股觀察 */
+#picksBox{display:none}
+body.picksMode #picksBox{display:block}
+body.picksMode #descPanel,body.picksMode #filters,body.picksMode #counts,body.picksMode .tablewrap,body.picksMode #cards,body.picksMode #btnFilter{display:none!important}
+.tab.pickTab:not(.on){border-color:var(--accent);color:var(--accent);font-weight:600}
+.pickTitle{font-size:17px;font-weight:700}
+.sub2{font-size:12px;color:var(--muted);font-weight:400}
+.mk{display:flex;flex-wrap:wrap;gap:4px 16px;margin:6px 0 2px;font-size:14px}
+.disc{margin-top:8px;font-size:12px;color:var(--muted);line-height:1.6;border-top:1px dashed var(--line);padding-top:8px}
+.pickGrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:12px}
+.card.pick{margin:0}
+.rank{flex:none;width:28px;height:28px;border-radius:50%;background:var(--accent);color:var(--accent-ink);display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;margin-top:2px}
+.score{margin-top:8px;font-size:12px;color:var(--muted)}
+.score b{font-size:15px;color:var(--ink)}
+.tags{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
+.tag{font-size:12px;padding:2px 8px;border-radius:999px;line-height:1.6}
+.tag.ok2{background:var(--hl);color:var(--accent);border:1px solid var(--line)}
+.tag.risk{background:var(--warn-bg);color:var(--warn)}
 footer{color:var(--muted);font-size:12px;padding:6px 20px 30px;max-width:1800px;margin:0 auto;line-height:1.7}
 
 /* ---------- 手機 ---------- */
@@ -132,6 +151,7 @@ footer{color:var(--muted);font-size:12px;padding:6px 20px 30px;max-width:1800px;
   .big{font-size:24px}
   .tablewrap{display:none}
   #cards{display:block}
+  .pickGrid{grid-template-columns:1fr;gap:10px}
   #filters{position:fixed;left:0;right:0;bottom:0;z-index:40;margin:0;border-radius:18px 18px 0 0;box-shadow:var(--shadow);
     padding:6px 16px calc(16px + var(--sab));max-height:82vh;overflow:auto;transform:translateY(105%);transition:transform .25s ease;display:block}
   #filters.open{transform:none}
@@ -167,7 +187,8 @@ footer{color:var(--muted);font-size:12px;padding:6px 20px 30px;max-width:1800px;
   <details class="panel status" id="statusBar"><summary>載入中…</summary></details>
   <div class="warnbox" id="warnBox"></div>
 
-  <div class="panel">
+  <div id="picksBox"></div>
+  <div class="panel" id="descPanel">
     <div class="desc" id="desc"></div>
     <div class="custom" id="customPanel">
       <div class="grid" id="condGrid"></div>
@@ -219,6 +240,7 @@ footer{color:var(--muted);font-size:12px;padding:6px 20px 30px;max-width:1800px;
 "use strict";
 const $ = s => document.querySelector(s);
 const STRATS = [
+  {k:"picks", n:"★ 今日選股觀察", d:"", cols:[]},
   {k:"s1", n:"突破增量", d:"<code>H[t] &gt; H[p]</code> 且 <code>V[t] &gt; V[p]</code>", cols:[]},
   {k:"s2", n:"20日漲停破五日", d:"最近 20 個交易日至少一天收盤漲停，且 <code>C[t] &lt; MA5[t]</code>（低於五日線即可，不要求今天才跌破）", cols:["lu20d","limit"]},
   {k:"s3", n:"漲停收十字", d:"前一交易日收盤漲停，且 <code>O[t] == C[t]</code>（嚴格相等）", cols:["luPrev"]},
@@ -340,8 +362,31 @@ function compute(){
   return o;
 }
 
+function renderPicks(){
+  const P = DATA.picks || [], M = DATA.market || {}, st = DATA.status || {};
+  const SN = Object.fromEntries(STRATS.map(s=>[s.k, s.n]));
+  const strat = Object.entries(M.strat||{}).filter(([,n])=>n>0).sort((a,b)=>b[1]-a[1]).slice(0,5)
+    .map(([k,n])=>`${esc(SN[k])} ${n}`).join("、");
+  const head = `<div class="panel pickHead">
+    <div class="pickTitle">今日選股觀察 <span class="sub2">${fmtD(DATA.date)}${st.provisional?`・暫行版（行情時間 ${esc(st.asOf||"")}）`:"・官方收盤資料"}</span></div>
+    <div class="mk"><span>上漲 <b class="up">${M.up??"—"}</b></span><span>下跌 <b class="dn">${M.down??"—"}</b></span><span>平盤 <b>${M.flat??"—"}</b></span><span>收漲停 <b class="up">${M.limitUp??"—"}</b></span></div>
+    ${strat?`<div class="sub2">收盤價 ≥200 元中符合較多的策略：${strat}</div>`:""}
+    <div class="disc">依本平台 11 組策略的「多策略共振」自動計分排序（突破增量、MACD 翻紅 +3；MACD 紅柱增長、投信連買、月K轉紅、五日線上揚量縮 +2；其餘 +1），只列收盤價 ≥200 元、成交量 ≥500 張、非處置中，且至少兩項訊號、4 分以上的個股。這是規則產生的觀察名單，不代表任何專家意見，也不是個人化投資建議；進出場請自行判斷並控管風險。</div>
+  </div>`;
+  const body = P.length ? P.map((p,i)=>`<article class="card pick">
+    <div class="ctop"><div class="rank">${i+1}</div><div><div class="cname">${esc(p.name)}</div><div class="cmeta">${p.code}・${p.mkt}・${lots(p.v)} 張${p.vinc!=null?`・量增 ${pct(p.vinc)}`:""}</div></div>
+      <div class="cprice"><div class="px">${nf(p.c)}</div><div class="pc ${cls(p.chg)}">${pct(p.chg)}</div></div></div>
+    <div class="score">共振分數 <b>${p.score}</b></div>
+    <div class="tags">${p.why.map(w=>`<span class="tag ok2">${esc(w)}</span>`).join("")}</div>
+    ${p.risk.length?`<div class="tags">${p.risk.map(w=>`<span class="tag risk">⚠ ${esc(w)}</span>`).join("")}</div>`:""}
+  </article>`).join("") : `<div class="panel empty">今日沒有同時符合多項訊號的個股。</div>`;
+  $("#picksBox").innerHTML = head + `<div class="pickGrid">${body}</div>`;
+  LIST = [];
+}
+
 function run(){
   if (!DATA) return;
+  if (cur === "picks") return renderPicks();
   const res = compute(), trust = $("#addTrust").checked;
   let list = res.yes.map(r=>({...r,_und:false}));
   if ($("#showUnd").checked) list = list.concat(res.und.map(r=>({...r,_und:true})));
@@ -417,6 +462,17 @@ mq.addEventListener?.("change", ()=>DATA && render());
 // ---------- 匯出 ----------
 function exportCsv(){
   if (!DATA) return;
+  if (cur === "picks"){
+    const q = s => { s = s==null?"":String(s); return /[",\n]/.test(s) ? '"'+s.replace(/"/g,'""')+'"' : s; };
+    const lines = ["排名,股票名稱,代號,市場,收盤價,今日漲跌幅(%),成交量(張),量增幅(%),共振分數,入選理由,風險提示"];
+    (DATA.picks||[]).forEach((p,i)=>lines.push([i+1,p.name,p.code,p.mkt,p.c,p.chg?.toFixed(2),Math.round((p.v||0)/1000),p.vinc==null?"":p.vinc.toFixed(2),p.score,p.why.join("；"),p.risk.join("；")].map(q).join(",")));
+    const name = `今日選股觀察_${DATA.date}${DATA.status?.provisional?"_暫行":""}.csv`;
+    const blob = new Blob(["﻿"+lines.join("\n")], {type:"text/csv;charset=utf-8"});
+    const file = typeof File === "function" ? new File([blob], name, {type:"text/csv"}) : null;
+    if (mq.matches && file && navigator.canShare?.({files:[file]})) { navigator.share({files:[file], title:name}).catch(()=>{}); return; }
+    const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = name; a.click(); setTimeout(()=>URL.revokeObjectURL(a.href), 2000);
+    return;
+  }
   const cols = columns();
   const q = s => { s = s==null?"":String(s); return /[",\n]/.test(s) ? '"'+s.replace(/"/g,'""')+'"' : s; };
   const raw = k => { const d = COLDEF[k]; return d.x ? (r=>d.x(r)) : (r=>{ const v = d.v(r); return v==="—"?"":String(v).replace(/,/g,""); }); };
@@ -451,6 +507,7 @@ function statusBar(){
     </div>`;
   $("#statusBar").open = open;
   const warns = [];
+  if (s.provisional) warns.push(`<b>暫行版</b>：本日行情為 13:30 收盤後擷取的即時行情快照（資料時間 ${esc(s.asOf||"")}），可能未含最後收盤集合競價，非官方收盤價；約 15:30 後會以證交所／櫃買中心官方資料自動校正。投信資料尚未公布，相關條件為未判定。`);
   if (!s.twse || !s.tpex) warns.push(`本日${!s.twse?"上市":""}${!s.twse&&!s.tpex?"、":""}${!s.tpex?"上櫃":""}行情待補，結果僅涵蓋已載入市場，不代表另一市場無符合個股。`);
   if (!instOk || (DATA.prevStatus && (!ps.inst_twse || !ps.inst_tpex))) warns.push("投信資料（今日或前一交易日）有缺，投信相關條件於缺漏市場顯示為未判定。");
   if (!dispOk) warns.push("處置公告尚未涵蓋至本日，「下一交易日出關」結果待核對。");
@@ -477,7 +534,7 @@ async function loadDates(keep){
   const sel = $("#date"), prev = sel.value;
   sel.innerHTML = j.dates.map(d=>{
     const part = !(d.twse && d.tpex && d.inst_twse && d.inst_tpex);
-    return `<option value="${d.date}">${fmtD(d.date)}${part?"（部分）":""}</option>`;
+    return `<option value="${d.date}">${fmtD(d.date)}${d.provisional?"（暫行）":part?"（部分）":""}</option>`;
   }).join("");
   if (keep && prev && j.dates.some(d=>d.date===prev)) sel.value = prev;
   if (STATIC) return j.dates.length;
@@ -505,7 +562,7 @@ async function pollJob(){
 // ---------- UI ----------
 function openSheet(on){ $("#filters").classList.toggle("open", on); $("#backdrop").classList.toggle("open", on); }
 function buildUI(){
-  $("#tabs").innerHTML = STRATS.map((s,i)=>`<span class="tab" role="button" tabindex="0" data-k="${s.k}">${s.k==="custom"?"":(i+1)+". "}${s.n}</span>`).join("");
+  $("#tabs").innerHTML = STRATS.map(s=>`<span class="tab ${s.k==='picks'?'pickTab':''}" role="button" tabindex="0" data-k="${s.k}">${/^s\d+$/.test(s.k)?s.k.slice(1)+". ":""}${s.n}</span>`).join("");
   $("#condGrid").innerHTML = CONDS.map((c,i)=>`<label><input type="checkbox" id="cb_${c.k}">${i+1}. ${c.n}</label>`).join("");
   document.querySelectorAll(".tab").forEach(t=>{ t.onclick=()=>selectStrat(t.dataset.k); t.onkeydown=e=>{ if(e.key==="Enter") selectStrat(t.dataset.k); }; });
   ["q","minClose","minVinc"].forEach(id=>$("#"+id).addEventListener("input", run));
@@ -541,8 +598,9 @@ function selectStrat(k){
     if (on) t.scrollIntoView({block:"nearest", inline:"center", behavior:"smooth"});
   });
   const s = STRATS.find(x=>x.k===k);
-  $("#desc").innerHTML = s.d + (k!=="custom" ? "<br>共同條件：收盤價 ≥ 最低收盤價；各策略獨立篩選、不疊加。" : "");
+  $("#desc").innerHTML = s.d + (/^s\d+$/.test(k) ? "<br>共同條件：收盤價 ≥ 最低收盤價；各策略獨立篩選、不疊加。" : "");
   $("#customPanel").classList.toggle("on", k==="custom");
+  document.body.classList.toggle("picksMode", k==="picks");
   store.set("tw-screener-strat", k);
   run();
 }
@@ -551,7 +609,7 @@ $("#foot").innerHTML = `符號：t＝所選交易日、p＝前一交易日（非
 收盤漲停：上櫃採櫃買中心公告之「次日漲停價」；上市以證交所當日參考價（收盤−漲跌價差）×1.1 依升降單位捨去計算。MACD(12,26,9)，未還原日收盤價，EMA 以 SMA 初始化，柱體＝2×(DIF−訊號線)，不足 120 筆或缺最新兩日資料標示未判定。<br>
 「前次符合日」＝所選日期之前，該股最近一次符合同一策略的交易日。資料不足一律列為「未判定」，不視為不成立。本工具僅供研究參考，非投資建議。`;
 
-buildUI(); selectStrat(store.get("tw-screener-strat", "s1"));
+buildUI(); selectStrat(STRATS.some(s=>s.k===store.get("tw-screener-strat","")) ? store.get("tw-screener-strat","") : "picks");
 loadDates(false).then(n=>{ if (n) loadScreen(); else $("#statusBar").innerHTML = "<summary>尚無資料，請按「更新」（首次約需 20–30 分鐘回補歷史）。</summary>"; })
   .catch(()=>{ $("#statusBar").innerHTML = "<summary>無法載入資料：請確認網路連線（本機版請確認「啟動篩選平台.bat」正在執行）。</summary>"; });
 if (!mq.matches && location.hostname.match(/^(localhost|127\.|192\.168\.|10\.)/)) fetch("api/info").then(r=>r.json()).then(j=>{

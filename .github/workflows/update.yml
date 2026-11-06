@@ -2,7 +2,12 @@ name: 每日更新與部署
 
 on:
   schedule:
-    # 台灣時間（UTC+8）週一至週五 16:40、18:40、21:10；投信與處置資料較晚公布，分三次補齊
+    # 台灣時間（UTC+8）週一至週五
+    # 13:35、14:05：收盤後暫行版（官方未公布時用即時行情快照）
+    - cron: "35 5 * * 1-5"
+    - cron: "5 6 * * 1-5"
+    # 15:30：以官方收盤資料校正；16:40、18:40、21:10：補齊投信與處置公告
+    - cron: "30 7 * * 1-5"
     - cron: "40 8 * * 1-5"
     - cron: "40 10 * * 1-5"
     - cron: "10 13 * * 1-5"
@@ -12,6 +17,10 @@ on:
         description: "重抓指定日期（YYYYMMDD，空白則只補缺）"
         required: false
         default: ""
+      provisional:
+        description: "執行暫行版（13:30 即時行情）"
+        type: boolean
+        default: false
   push:
     branches: [main]
     paths: ["web/**", "engine.py", "build.py", ".github/workflows/**"]
@@ -42,7 +51,9 @@ jobs:
           TZ: Asia/Taipei
           PYTHONIOENCODING: utf-8
           REFETCH: ${{ github.event.inputs.refetch }}
+          PROVISIONAL: ${{ github.event.schedule == '35 5 * * 1-5' || github.event.schedule == '5 6 * * 1-5' || github.event.inputs.provisional == 'true' }}
         run: |
+          if [ "$PROVISIONAL" = "true" ]; then python fetch.py --provisional; exit 0; fi
           if [ -n "$REFETCH" ]; then python fetch.py --refetch "$REFETCH"; fi
           python fetch.py
       - name: 保存資料到儲存庫

@@ -86,11 +86,16 @@ class Engine:
             if not (d.get("twse", {}).get("ok") or d.get("tpex", {}).get("ok")):
                 continue
             self.days.append(d["date"])
-            self.status[d["date"]] = {k: bool(d.get(k, {}).get("ok")) for k in ("twse", "tpex", "inst_twse", "inst_tpex")}
+            st = {k: bool(d.get(k, {}).get("ok")) for k in ("twse", "tpex", "inst_twse", "inst_tpex")}
+            prov = [d[k].get("asOf", "") for k in ("twse", "tpex") if d.get(k, {}).get("provisional")]
+            st["provisional"] = bool(prov)
+            st["asOf"] = max(prov) if prov else None
+            self.status[d["date"]] = st
             raw.append(d)
         self.didx = {d: i for i, d in enumerate(self.days)}
         N = len(self.days)
-        # bars[code][i] = (mkt, name, o, h, l, c, v, chg, nextLU)
+        # bars[code][i] = (mkt, name, o, h, l, c, v, chg, nextLU, limitToday)
+        # limitToday 只有暫行版（即時行情）提供：證交所公布之當日漲停價
         self.bars, self.inst = {}, {}
         for i, d in enumerate(raw):
             for mkt_key, mkt in (("twse", "上市"), ("tpex", "上櫃")):
@@ -98,7 +103,8 @@ class Engine:
                 if not part.get("ok"):
                     continue
                 for code, r in part["rows"].items():
-                    self.bars.setdefault(code, [None] * N)[i] = (mkt, r[0], r[1], r[2], r[3], r[4], r[5], r[6], r[7])
+                    self.bars.setdefault(code, [None] * N)[i] = (mkt, r[0], r[1], r[2], r[3], r[4], r[5], r[6], r[7],
+                                                                 r[8] if len(r) > 8 else None)
             for ik in ("inst_twse", "inst_tpex"):
                 part = d.get(ik, {})
                 if part.get("ok"):
@@ -142,7 +148,9 @@ class Engine:
                     continue
                 mkt, c, chg = b[0], b[5], b[7]
                 lp = None
-                if mkt == "上櫃" and i > 0 and bars[i - 1] and bars[i - 1][0] == "上櫃" and bars[i - 1][8]:
+                if b[9]:
+                    lp = b[9]  # 暫行版：即時行情的當日漲停價
+                elif mkt == "上櫃" and i > 0 and bars[i - 1] and bars[i - 1][0] == "上櫃" and bars[i - 1][8]:
                     lp = bars[i - 1][8]  # 櫃買中心前一日公告之「次日漲停價」
                 elif c is not None and chg is not None:
                     ref = round(c - chg, 4)
@@ -224,7 +232,7 @@ class Engine:
         if not b:
             return None
         P = self.pre[code]
-        mkt, name, o, h, l, c, v, chg, _ = b
+        mkt, name, o, h, l, c, v, chg = b[:8]
         bp = bars[i - 1] if i > 0 else None
         hp = bp[3] if bp else None
         lp_ = bp[4] if bp else None
@@ -328,7 +336,10 @@ class Engine:
                     r[kk] = None
             rows.append(r)
         cov = self.disp_db.get("covered", {})
+        picks, market = self._picks(rows, date)
         return {
+            "picks": picks,
+            "market": market,
             "date": date,
             "prevDate": self.days[i - 1] if i > 0 else None,
             "status": self.status[date],
@@ -339,6 +350,66 @@ class Engine:
             "disposalFetchedAt": self.disp_db.get("fetchedAt"),
             "rows": rows,
         }
+
+    # ------------------------------------------------------------
+    PICK_MIN_CLOSE = 200
+    PICK_MIN_LOTS = 500
+    PICK_TOP = 12
+
+    def _picks(self, rows, date):
+        """今日選股觀察：依多策略共振計分排序（規則固定、可重現），附入選理由與風險提示。"""
+        traded = [r for r in rows if r["c"] is not None and r["chg"] is not None]
+        up = sum(1 for r in traded if r["chg"] > 0)
+        down = sum(1 for r in traded if r["chg"] < 0)
+        lu = sum(1 for r in traded if r["limit"] and abs(r["c"] - r["limit"]) < 1e-6)
+        market = {"traded": len(traded), "up": up, "down": down, "flat": len(traded) - up - down, "limitUp": lu,
+                  "strat": {k: sum(1 for r in rows if r["c"] is not None and r["c"] >= self.PICK_MIN_CLOSE and r["f"][k] is True)
+                            for k in STRAT_KEYS}}
+        out = []
+        for r in traded:
+            f = r["f"]
+            if r["c"] < self.PICK_MIN_CLOSE or (r["v"] or 0) < self.PICK_MIN_LOTS * 1000:
+                continue
+            in_disp = r["disp"] and r["disp"]["start"] <= date <= r["disp"]["end"] and f["s7"] is not True
+            if in_disp:
+                continue  # 處置中（分盤撮合、流動性受限）不列入，出關日除外
+            score, why, risk = 0, [], []
+            def add(pts, text):
+                nonlocal score
+                score += pts; why.append(text)
+            if f["s1"]:
+                add(3, f"突破昨高且量增 {r['vinc']:.0f}%" if r["vinc"] is not None else "突破昨高且量增")
+            if f["s11"]: add(3, "日MACD 由綠翻紅")
+            elif f["s10"]: add(2, "日MACD 紅柱增長")
+            elif f["s9"]: add(1, "日MACD 綠柱縮短")
+            if f["s6"]:
+                add(2, f"投信連兩日買超（合計 {round((r['F'] + r['Fp']) / 1000):,} 張）")
+            if f["s8"]: add(2, "月K由綠轉紅")
+            if f["s4"]: add(2, "五日線上揚、量縮一半（價穩量縮）")
+            elif f["s5"]: add(1, "低點墊高、量縮")
+            if f["c5"] and f["c7"] is False:
+                add(1, "收盤站上上揚的五日線")
+            if f["s7"]: add(1, "處置最後一日，下一交易日出關")
+            if len(why) < 2 or score < 4:
+                continue
+            if r["limit"] and abs(r["c"] - r["limit"]) < 1e-6:
+                risk.append("今日收漲停，追價風險高")
+            elif r["chg"] >= 7:
+                risk.append(f"今日已漲 {r['chg']:.1f}%，留意追高")
+            if r["chg"] <= -5:
+                risk.append(f"今日跌 {abs(r['chg']):.1f}%")
+            if r["vinc"] is not None and r["vinc"] > 200:
+                risk.append("爆量，留意隔日量能能否延續")
+            if f["c7"]:
+                risk.append("收盤仍在五日線下")
+            if f["c3"] and f["c7"]:
+                risk.append("近 20 日曾漲停但已跌破五日線")
+            if f["c8"] is None:
+                risk.append("投信資料未公布")
+            out.append({"code": r["code"], "name": r["name"], "mkt": r["mkt"], "c": r["c"], "chg": r["chg"],
+                        "v": r["v"], "vinc": r["vinc"], "score": score, "why": why, "risk": risk})
+        out.sort(key=lambda x: (-x["score"], -(x["vinc"] if x["vinc"] is not None else -1e9)))
+        return out[:self.PICK_TOP], market
 
     def dates(self):
         return [{"date": d, **self.status[d]} for d in reversed(self.days)]

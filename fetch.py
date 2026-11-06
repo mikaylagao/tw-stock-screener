@@ -230,19 +230,26 @@ PARTS = [("twse", fetch_twse_quotes), ("tpex", fetch_tpex_quotes),
          ("inst_twse", fetch_twse_inst), ("inst_tpex", fetch_tpex_inst)]
 
 
+def _official_ok(part):
+    return bool(part.get("ok")) and not part.get("provisional")
+
+
 def fetch_day(d, force=False):
     cur = None if force else load_day(d)
-    if cur and (cur.get("holiday") or all(cur.get(k, {}).get("ok") for k, _ in PARTS)):
+    if cur and (cur.get("holiday") or all(_official_ok(cur.get(k, {})) for k, _ in PARTS)):
         return cur
     cur = cur or {"date": d}
-    # 先抓上市行情判斷是否休市
+    # 先抓上市行情判斷是否休市；暫行資料（13:30 即時快照）會在官方資料公布後被取代
     for key, fn in PARTS:
-        if cur.get(key, {}).get("ok"):
+        old = cur.get(key, {})
+        if _official_ok(old):
             continue
         res = fn(d)
-        cur[key] = res
+        if res.get("ok") or not old.get("provisional"):
+            cur[key] = res
         log(f"  {d} {key}: {'OK ' + str(len(res.get('rows', {}))) if res.get('ok') else res.get('err')}")
-        if key == "tpex" and not cur["twse"].get("ok") and cur["twse"].get("nodata") and res.get("nodata"):
+        if key == "tpex" and not cur["twse"].get("ok") and cur["twse"].get("nodata") and res.get("nodata") \
+                and not cur.get("tpex", {}).get("provisional"):
             # 兩市場都無資料
             today = dt.date.today().strftime("%Y%m%d")
             if d < today:
@@ -255,6 +262,78 @@ def fetch_day(d, force=False):
         with open(day_path(d), "w", encoding="utf-8") as fh:
             json.dump(cur, fh, ensure_ascii=False, separators=(",", ":"))
     return cur
+
+
+# ---------------- 13:30 收盤後暫行版（證交所基本市況報導即時行情）----------------
+
+def _latest_official_codes():
+    """取最近一個官方交易日的代號清單，作為即時行情查詢名單。"""
+    for f in sorted(os.listdir(DAILY), reverse=True):
+        d = load_day(f[:8])
+        if d and _official_ok(d.get("twse", {})) and _official_ok(d.get("tpex", {})):
+            return {"twse": list(d["twse"]["rows"]), "tpex": list(d["tpex"]["rows"])}
+    return {"twse": [], "tpex": []}
+
+
+def fetch_mis(d, codes, ex):
+    """回傳暫行版行情。收盤價取最後成交價（z，若無則取最近一筆成交 trade.z）。"""
+    rows, as_of = {}, ""
+    for k in range(0, len(codes), 100):
+        batch = "|".join(f"{ex}_{c}.tw" for c in codes[k:k + 100])
+        url = f"https://mis.twse.com.tw/stock/api/getStockInfo.jsp?json=1&delay=0&ex_ch={batch}"
+        j = None
+        for attempt in range(3):
+            try:
+                req = urllib.request.Request(url, headers={**UA, "Referer": "https://mis.twse.com.tw/stock/index.jsp"})
+                with urllib.request.urlopen(req, timeout=30) as r:
+                    j = json.loads(r.read(5_000_000).decode("utf-8", "replace"))
+                break
+            except Exception as e:
+                log(f"  ! mis 重試 {attempt + 1}: {e!r}")
+                time.sleep(3)
+        time.sleep(1.0)
+        for m in (j or {}).get("msgArray", []):
+            if m.get("d") != d or not m.get("c"):
+                continue  # 非當日資料（休市或尚未開盤）
+            z = num(m.get("z"))
+            if z is None and isinstance(m.get("trade"), dict):
+                z = num(m["trade"].get("z"))
+            y, v = num(m.get("y")), num(m.get("v"))
+            rows[m["c"]] = [m.get("n", "").strip(), num(m.get("o")), num(m.get("h")), num(m.get("l")), z,
+                            v * 1000 if v is not None else None,
+                            round(z - y, 4) if (z is not None and y is not None) else None, None, num(m.get("u"))]
+            as_of = max(as_of, m.get("t") or "")
+    if not rows:
+        return {"ok": False, "nodata": True, "err": "即時行情無當日資料"}
+    return {"ok": True, "provisional": True, "asOf": as_of, "rows": rows,
+            "fetchedAt": dt.datetime.now().isoformat(timespec="seconds")}
+
+
+def run_provisional():
+    os.makedirs(DAILY, exist_ok=True)
+    d = dt.date.today().strftime("%Y%m%d")
+    if dt.date.today().weekday() >= 5:
+        log("週末，不抓暫行版"); return
+    codes = _latest_official_codes()
+    log(f"== 暫行版 {d}：先嘗試官方收盤行情")
+    cur = fetch_day(d) or load_day(d) or {"date": d}
+    if cur.get("holiday"):
+        log("休市"); return
+    changed = False
+    for key, ex in (("twse", "tse"), ("tpex", "otc")):
+        if _official_ok(cur.get(key, {})):
+            log(f"  {key} 已有官方資料"); continue
+        res = fetch_mis(d, codes[key], ex)
+        log(f"  {key} 即時快照: {'OK ' + str(len(res['rows'])) + ' 檔，資料時間 ' + res['asOf'] if res.get('ok') else res.get('err')}")
+        if res.get("ok"):
+            cur[key] = res; changed = True
+    if changed:
+        for k, _ in PARTS:
+            cur.setdefault(k, {"ok": False, "err": "尚未公布"})
+        cur["fetchedAt"] = dt.datetime.now().isoformat(timespec="seconds")
+        with open(day_path(d), "w", encoding="utf-8") as fh:
+            json.dump(cur, fh, ensure_ascii=False, separators=(",", ":"))
+    update_disposal((dt.date.today() - dt.timedelta(days=45)).strftime("%Y%m%d"), d)
 
 
 def run(start=None, end=None, refetch=None, progress=None):
@@ -292,5 +371,9 @@ if __name__ == "__main__":
     ap.add_argument("--from", dest="start")
     ap.add_argument("--to", dest="end")
     ap.add_argument("--refetch")
+    ap.add_argument("--provisional", action="store_true", help="13:30 收盤後暫行版")
     a = ap.parse_args()
-    run(a.start, a.end, a.refetch, progress=lambda m: log("==", m))
+    if a.provisional:
+        run_provisional()
+    else:
+        run(a.start, a.end, a.refetch, progress=lambda m: log("==", m))
